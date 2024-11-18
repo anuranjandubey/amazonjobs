@@ -1,3 +1,4 @@
+from urllib.parse import urlencode
 import urllib3
 import json
 from datetime import datetime
@@ -91,19 +92,17 @@ class AmazonJobsTracker:
         return html
 
     def send_email(self, new_jobs):
-        """Send email with new job listings using the specified email configuration"""
+        """Send email with new job listings"""
         if not new_jobs:
             print("No new jobs to send email about.")
             return
         
-        # Create the email
         msg = MIMEMultipart('alternative')
         msg['From'] = self.email_address
         msg['To'] = self.email_address
         msg['Cc'] = self.cc_email
         msg['Subject'] = f"Oye {len(new_jobs)} New Amazon Jobs Agaiiy oyeeeee!!!"
         
-        # Add HTML content
         html_content = self.generate_html_content(new_jobs)
         msg.attach(MIMEText(html_content, 'html'))
         
@@ -113,7 +112,6 @@ class AmazonJobsTracker:
             for job in new_jobs:
                 csv_content += f"\"{job['title']}\",\"{job['location']}\",\"{job['posted_date']}\",\"{job.get('level', 'N/A')}\",\"{job['id_icims']}\",\"https://www.amazon.jobs/en/jobs/{job['id_icims']}\"\n"
             
-            # Save CSV file
             csv_filename = "amazon_new_jobs.csv"
             with open(csv_filename, 'w') as f:
                 f.write(csv_content)
@@ -134,7 +132,6 @@ class AmazonJobsTracker:
             server.starttls()
             server.login(self.email_address, self.email_password)
             
-            # Send to all recipients
             all_recipients = [self.cc_email] + self.bcc_recipients
             server.sendmail(self.email_address, all_recipients, msg.as_string())
             server.quit()
@@ -142,12 +139,90 @@ class AmazonJobsTracker:
             print(f"Email sent successfully with {len(new_jobs)} new jobs!")
             print(f"Recipients: CC -> {self.cc_email}, BCC -> {', '.join(self.bcc_recipients)}")
             
-            # Clean up CSV file
             os.remove(csv_filename)
             
         except Exception as e:
             print(f"Error sending email: {e}")
 
+    def check_new_jobs(self):
+        """Check for new jobs and send email if found"""
+        searches = [
+            "software dev engineer",
+            "software developer 2025",
+            "software development engineer 2025",
+            "new grad software 2025",
+            "entry level software 2025",
+            "software development engineer",
+            "graduate software engineer 2025",
+            "university graduate software 2025",
+            "sde 2025"
+        ]
+        
+        new_jobs = []
+        http = urllib3.PoolManager()
+        
+        for search_term in searches:
+            print(f"\nSearching for: {search_term}")
+            
+            params = {
+                "normalized_country_code[]": "USA",
+                "offset": 0,
+                "result_limit": 20,
+                "sort": "recent",
+                "country": "USA",
+                "base_query": search_term,
+                "category[]": ["software-development"],
+                "experience[]": ["entry-level"],
+                "level[]": ["entry-level"],
+                "posted_within[]": ["1d"],
+            }
+            
+            try:
+                query_string = urlencode(params, doseq=True)
+                url = f"https://www.amazon.jobs/en/search.json?{query_string}"
+                
+                response = http.request('GET', url, headers={
+                    "Accept": "application/json",
+                    "Accept-Language": "en-US,en;q=0.5",
+                })
+                
+                if response.status == 200:
+                    data = json.loads(response.data.decode('utf-8'))
+                    jobs = data.get("jobs", [])
+                    
+                    for job in jobs:
+                        job_id = job['id_icims']
+                        if (job_id not in self.seen_jobs and 
+                            self.is_recent_posting(job['posted_date'])):
+                            new_jobs.append(job)
+                            self.seen_jobs.add(job_id)
+                
+            except Exception as e:
+                print(f"Error with search term '{search_term}': {e}")
+                print(f"Full error details: {str(e)}")
+        
+        # Remove duplicates while preserving order
+        unique_new_jobs = []
+        seen = set()
+        for job in new_jobs:
+            if job['id_icims'] not in seen:
+                seen.add(job['id_icims'])
+                unique_new_jobs.append(job)
+        
+        if unique_new_jobs:
+            self.send_email(unique_new_jobs)
+            self.save_seen_jobs()
+            print(f"\nFound {len(unique_new_jobs)} new jobs!")
+        else:
+            print("\nNo new jobs found.")
+
+def main():
+    try:
+        tracker = AmazonJobsTracker()
+        tracker.check_new_jobs()
+    except Exception as e:
+        print(f"Error in main execution: {str(e)}")
+        raise
+
 if __name__ == "__main__":
-    tracker = AmazonJobsTracker()
-    tracker.check_new_jobs()
+    main()
