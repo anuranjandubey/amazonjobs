@@ -149,8 +149,7 @@ class AmazonJobsTracker:
         searches = [
             "software dev engineer",
             "software developer 2025",
-            "software development engineer 2025",
-            "new grad software 2025",
+            "system development engineer",
             "entry level software 2025",
             "software development engineer",
             "graduate software engineer 2025",
