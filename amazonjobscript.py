@@ -15,7 +15,6 @@ import certifi
 class AmazonJobsTracker:
     def __init__(self):
         try:
-            # Get the MongoDB URI
             base_uri = os.environ.get('MONGODB_URI', '')
             if not base_uri:
                 raise ValueError("MongoDB URI not found in environment variables")
@@ -27,19 +26,21 @@ class AmazonJobsTracker:
                 tlsCAFile=certifi.where()
             )
             
-            # Test the connection
             self.client.admin.command('ping')
-            print("Pinged your deployment. You successfully connected to MongoDB!")
+            print("Successfully connected to MongoDB!")
             
             self.db = self.client['amazon_jobs']
             self.seen_jobs_collection = self.db['seen_jobs']
             self.initialize_ttl_index()
             
+            # Print current collection stats
+            count = self.seen_jobs_collection.count_documents({})
+            print(f"Currently tracking {count} jobs in database")
+            
         except Exception as e:
             print(f"Error connecting to MongoDB: {str(e)}")
             raise
-        
-        # Email configuration
+
         self.smtp_server = 'smtp.gmail.com'
         self.smtp_port = 587
         self.email_address = os.environ['EMAIL_ADDRESS']
@@ -47,56 +48,152 @@ class AmazonJobsTracker:
         self.cc_email = os.environ['CC_EMAIL']
         self.bcc_recipients = os.environ['BCC_RECIPIENTS'].split(',')
 
-    def is_recent_posting(self, posted_date_str, days=1):
-        """Check if the job was posted within the last specified days"""
-        try:
-            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
-            current_date = datetime.now()
-            difference = current_date - posted_date
-            return difference.days <= days
-        except Exception as e:
-            print(f"Error parsing date {posted_date_str}: {e}")
-            return False
-
     def initialize_ttl_index(self):
-        """Initialize TTL index to automatically remove old job entries after 30 days"""
         try:
+            # Create TTL index on created_at field
             self.seen_jobs_collection.create_index(
                 "created_at", 
                 expireAfterSeconds=30 * 24 * 60 * 60  # 30 days
             )
-            print("TTL index check completed")
+            
+            # Create regular index on job_id for faster lookups
+            self.seen_jobs_collection.create_index("job_id", unique=True)
+            print("Indexes created/verified successfully")
         except Exception as e:
-            print(f"Error managing TTL index: {e}")
+            print(f"Error managing indexes: {e}")
+
+    def is_recent_posting(self, posted_date_str, days=1):
+        try:
+            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
+            current_date = datetime.now()
+            difference = current_date - posted_date
+            is_recent = difference.days <= days
+            print(f"Job posted on {posted_date}, {difference.days} days old, is_recent: {is_recent}")
+            return is_recent
+        except Exception as e:
+            print(f"Error parsing date {posted_date_str}: {e}")
+            return False
 
     def is_job_seen(self, job_id):
-        """Check if job has been seen before"""
         try:
-            return self.seen_jobs_collection.find_one({"_id": job_id}) is not None
+            result = self.seen_jobs_collection.find_one({"job_id": job_id})
+            is_seen = result is not None
+            print(f"Checking job {job_id}: {'previously seen' if is_seen else 'new job'}")
+            return is_seen
         except Exception as e:
             print(f"Error checking job status: {e}")
             return False
 
     def mark_job_seen(self, job_id, job_data):
-        """Mark job as seen in MongoDB with additional data"""
         try:
-            self.seen_jobs_collection.update_one(
-                {"_id": job_id},
-                {
-                    "$set": {
-                        "created_at": datetime.utcnow(),
-                        "last_seen": datetime.utcnow(),
-                        "title": job_data.get('title', ''),
-                        "location": job_data.get('location', ''),
-                        "posted_date": job_data.get('posted_date', ''),
-                        "level": job_data.get('level', ''),
-                        "url": f"https://www.amazon.jobs/en/jobs/{job_id}"
-                    }
-                },
+            # Create a more comprehensive job record
+            job_record = {
+                "job_id": job_id,
+                "created_at": datetime.utcnow(),
+                "last_seen": datetime.utcnow(),
+                "title": job_data.get('title', ''),
+                "location": job_data.get('location', ''),
+                "posted_date": job_data.get('posted_date', ''),
+                "level": job_data.get('level', ''),
+                "url": f"https://www.amazon.jobs/en/jobs/{job_id}",
+                "basic_qualifications": job_data.get('basic_qualifications', ''),
+                "first_seen_date": datetime.utcnow()
+            }
+            
+            # Use upsert with job_id as the unique identifier
+            result = self.seen_jobs_collection.update_one(
+                {"job_id": job_id},
+                {"$set": job_record},
                 upsert=True
             )
+            
+            if result.upserted_id:
+                print(f"New job {job_id} recorded in database")
+            else:
+                print(f"Job {job_id} information updated")
+                
         except Exception as e:
             print(f"Error marking job as seen: {e}")
+
+    def check_new_jobs(self):
+        """Check for new jobs and send email if found"""
+        searches = [
+            "software dev engineer",
+            "software developer 2025",
+            "software development engineer 2025",
+            "new grad software 2025",
+            "entry level software 2025",
+            "software development engineer",
+            "graduate software engineer 2025",
+            "university graduate software 2025",
+            "sde 2025"
+        ]
+        
+        new_jobs = []
+        http = urllib3.PoolManager()
+        
+        print("\nStarting job search...")
+        for search_term in searches:
+            print(f"\nSearching for: {search_term}")
+            
+            params = {
+                "normalized_country_code[]": "USA",
+                "offset": 0,
+                "result_limit": 20,
+                "sort": "recent",
+                "country": "USA",
+                "base_query": search_term,
+                "category[]": ["software-development"],
+                "experience[]": ["entry-level"],
+                "level[]": ["entry-level"],
+                "posted_within[]": ["1d"],
+            }
+            
+            try:
+                query_string = urlencode(params, doseq=True)
+                url = f"https://www.amazon.jobs/en/search.json?{query_string}"
+                
+                response = http.request('GET', url, headers={
+                    "Accept": "application/json",
+                    "Accept-Language": "en-US,en;q=0.5",
+                })
+                
+                if response.status == 200:
+                    data = json.loads(response.data.decode('utf-8'))
+                    jobs = data.get("jobs", [])
+                    print(f"Found {len(jobs)} total jobs for search term: {search_term}")
+                    
+                    for job in jobs:
+                        job_id = job['id_icims']
+                        if self.is_recent_posting(job['posted_date']):
+                            if not self.is_job_seen(job_id):
+                                print(f"New job found: {job['title']} ({job_id})")
+                                new_jobs.append(job)
+                                self.mark_job_seen(job_id, job)
+                            else:
+                                print(f"Skipping previously seen job: {job['title']} ({job_id})")
+                        else:
+                            print(f"Skipping old job: {job['title']} ({job_id})")
+                else:
+                    print(f"Error: Received status code {response.status}")
+                
+            except Exception as e:
+                print(f"Error with search term '{search_term}': {e}")
+        
+        # Remove duplicates while preserving order
+        unique_new_jobs = []
+        seen = set()
+        for job in new_jobs:
+            if job['id_icims'] not in seen:
+                seen.add(job['id_icims'])
+                unique_new_jobs.append(job)
+        
+        print(f"\nFound {len(unique_new_jobs)} unique new jobs")
+        
+        if unique_new_jobs:
+            self.send_email(unique_new_jobs)
+        else:
+            print("No new jobs to send")
 
     def generate_html_content(self, new_jobs):
         """Generate HTML email content for new jobs"""
@@ -297,13 +394,21 @@ def test_mongodb_connection():
 def main():
     tracker = None
     try:
-        # First test MongoDB connection
-        if not test_mongodb_connection():
-            print("MongoDB connection test failed. Exiting...")
-            sys.exit(1)
-            
         print("\nStarting Amazon Jobs Tracker...")
+        print("Current time:", datetime.now())
+        
         tracker = AmazonJobsTracker()
+        
+        # Print current database status
+        count = tracker.seen_jobs_collection.count_documents({})
+        recent_jobs = tracker.seen_jobs_collection.find().sort("created_at", -1).limit(5)
+        
+        print(f"\nCurrent database status:")
+        print(f"Total tracked jobs: {count}")
+        print("\nMost recent jobs in database:")
+        for job in recent_jobs:
+            print(f"- {job.get('title', 'No title')} ({job.get('job_id', 'No ID')}) - First seen: {job.get('first_seen_date')}")
+        
         tracker.check_new_jobs()
         print("\nJob check completed successfully!")
         
@@ -311,13 +416,9 @@ def main():
         print(f"Error in main execution: {str(e)}")
         raise
     finally:
-        # Close MongoDB connection
         if tracker and hasattr(tracker, 'client'):
-            try:
-                tracker.client.close()
-                print("MongoDB connection closed.")
-            except Exception as e:
-                print(f"Error closing MongoDB connection: {e}")
+            tracker.client.close()
+            print("MongoDB connection closed.")
 
 if __name__ == "__main__":
     main()
