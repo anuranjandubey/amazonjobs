@@ -67,6 +67,17 @@ class AmazonJobsTracker:
             print(f"Error checking job status: {e}")
             return False
 
+    def is_recent_posting(self, posted_date_str, days=1):
+        """Check if the job was posted within the last specified days"""
+        try:
+            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
+            current_date = datetime.now()
+            difference = current_date - posted_date
+            return difference.days <= days
+        except Exception as e:
+            print(f"Error parsing date {posted_date_str}: {e}")
+            return False
+
     def mark_job_seen(self, job_id, job_data):
         """Mark job as seen in MongoDB with additional data"""
         try:
