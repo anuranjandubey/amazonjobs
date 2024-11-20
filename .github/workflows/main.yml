@@ -1,36 +1,31 @@
-# name: Amazon Jobs Tracker
-# on:
-#   schedule:
-#     - cron: '0 * * * *'  # Runs every hour
-#   workflow_dispatch:      # Allows manual trigger from GitHub UI
+name: Amazon Jobs Tracker
+on:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour
+  workflow_dispatch:      # Allows manual trigger from GitHub UI
 
-# jobs:
-#   check-jobs:
-#     runs-on: ubuntu-latest
+jobs:
+  check-jobs:
+    runs-on: ubuntu-latest
     
-#     steps:
-#     - uses: actions/checkout@v2
+    steps:
+    - uses: actions/checkout@v2
     
-#     - name: Set up Python
-#       uses: actions/setup-python@v2
-#       with:
-#         python-version: '3.x'
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
     
-#     - name: Install dependencies
-#       run: |
-#         python -m pip install --upgrade pip
-#         pip install urllib3
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install urllib3 pymongo
     
-#     - name: Cache seen jobs
-#       uses: actions/cache@v2
-#       with:
-#         path: seen_jobs.json
-#         key: ${{ runner.os }}-seen-jobs
-    
-#     - name: Run job tracker
-#       env:
-#         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-#         EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-#         CC_EMAIL: ${{ secrets.CC_EMAIL }}
-#         BCC_RECIPIENTS: ${{ secrets.BCC_RECIPIENTS }}
-#       run: python amazonjobscript.py
+    - name: Run job tracker
+      env:
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+        CC_EMAIL: ${{ secrets.CC_EMAIL }}
+        BCC_RECIPIENTS: ${{ secrets.BCC_RECIPIENTS }}
+        MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      run: python amazonjobscript.py
