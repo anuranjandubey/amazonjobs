@@ -8,20 +8,53 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import os
+import requests
 from pymongo.mongo_client import MongoClient
-from pymongo.server_api import ServerApi
 import sys
 
+
+def download_ca_cert():
+    """Download the Let's Encrypt root certificate"""
+    try:
+        cert_url = "https://letsencrypt.org/certs/isrgrootx1.pem"
+        cert_path = "isrgrootx1.pem"
+        
+        # Download certificate if it doesn't exist
+        if not os.path.exists(cert_path):
+            print("Downloading Let's Encrypt root certificate...")
+            response = requests.get(cert_url)
+            response.raise_for_status()
+            
+            with open(cert_path, "wb") as f:
+                f.write(response.content)
+            print("Certificate downloaded successfully")
+        
+        return cert_path
+    except Exception as e:
+        print(f"Error downloading certificate: {e}")
+        return None
+        
 class AmazonJobsTracker:
     def __init__(self):
-        # MongoDB Atlas connection
         try:
-            uri = os.environ.get('MONGODB_URI', '')
-            if not uri:
+            # Get base URI
+            base_uri = os.environ.get('MONGODB_URI', '')
+            if not base_uri:
                 raise ValueError("MongoDB URI not found in environment variables")
             
+            # Download and set up CA certificate
+            cert_path = download_ca_cert()
+            if not cert_path:
+                raise ValueError("Failed to get CA certificate")
+            
+            # Add CA file parameter to URI
+            if '?' in base_uri:
+                uri = f"{base_uri}&tlsCAFile={cert_path}"
+            else:
+                uri = f"{base_uri}?tlsCAFile={cert_path}"
+            
             print("Connecting to MongoDB Atlas...")
-            self.client = MongoClient(uri, server_api=ServerApi('1'))
+            self.client = MongoClient(uri)
             
             # Test the connection
             self.client.admin.command('ping')
@@ -256,11 +289,23 @@ def test_mongodb_connection():
     """Test MongoDB connection separately"""
     try:
         print("Testing MongoDB connection...")
-        uri = os.environ.get('MONGODB_URI', '')
-        if not uri:
+        base_uri = os.environ.get('MONGODB_URI', '')
+        if not base_uri:
             raise ValueError("MongoDB URI not found in environment variables")
 
-        client = MongoClient(uri, server_api=ServerApi('1'))
+        # Download and set up CA certificate
+        cert_path = download_ca_cert()
+        if not cert_path:
+            raise ValueError("Failed to get CA certificate")
+
+        # Add CA file parameter to URI
+        if '?' in base_uri:
+            uri = f"{base_uri}&tlsCAFile={cert_path}"
+        else:
+            uri = f"{base_uri}?tlsCAFile={cert_path}"
+
+        print("Attempting connection with CA certificate...")
+        client = MongoClient(uri)
         client.admin.command('ping')
         print("Pinged your deployment. You successfully connected to MongoDB!")
         client.close()
