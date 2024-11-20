@@ -27,12 +27,10 @@ class AmazonJobsTracker:
             self.client = MongoClient(
                 mongodb_uri,
                 server_api=ServerApi('1'),
-                ssl=True,
-                ssl_cert_reqs=ssl.CERT_REQUIRED,
-                ssl_ca_certs=certifi.where(),
-                connect_timeout=30000,
-                socketTimeoutMS=None,
+                tlsCAFile=certifi.where(),
                 connectTimeoutMS=30000,
+                socketTimeoutMS=None,
+                connect=True,
                 retryWrites=True,
                 w="majority"
             )
