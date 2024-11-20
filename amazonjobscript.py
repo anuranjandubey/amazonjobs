@@ -9,6 +9,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import os
 from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 import sys
 
 class AmazonJobsTracker:
@@ -20,7 +21,7 @@ class AmazonJobsTracker:
                 raise ValueError("MongoDB URI not found in environment variables")
             
             print("Connecting to MongoDB Atlas...")
-            self.client = MongoClient(uri)
+            self.client = MongoClient(uri, server_api=ServerApi('1'))
             
             # Test the connection
             self.client.admin.command('ping')
@@ -259,7 +260,7 @@ def test_mongodb_connection():
         if not uri:
             raise ValueError("MongoDB URI not found in environment variables")
 
-        client = MongoClient(uri)
+        self.client = MongoClient(uri, server_api=ServerApi('1'))
         client.admin.command('ping')
         print("Pinged your deployment. You successfully connected to MongoDB!")
         client.close()
