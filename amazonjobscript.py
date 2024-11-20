@@ -260,7 +260,7 @@ def test_mongodb_connection():
         if not uri:
             raise ValueError("MongoDB URI not found in environment variables")
 
-        self.client = MongoClient(uri, server_api=ServerApi('1'))
+        client = MongoClient(uri, server_api=ServerApi('1'))
         client.admin.command('ping')
         print("Pinged your deployment. You successfully connected to MongoDB!")
         client.close()
