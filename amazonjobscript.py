@@ -282,37 +282,37 @@ class AmazonJobsTracker:
         else:
             print("\nNo new jobs found.")
 
-    def test_mongodb_connection():
-        """Test MongoDB connection separately"""
-        try:
-            print("Testing MongoDB connection...")
-            mongodb_uri = os.environ.get('MONGODB_URI', '')
-            if not mongodb_uri:
-                raise ValueError("MongoDB URI not found in environment variables")
-            
-            print(f"MongoDB URI format (masked): {AmazonJobsTracker.mask_connection_string(mongodb_uri)}")
-            
-            client = MongoClient(
-                mongodb_uri,
-                server_api=ServerApi('1'),
-                ssl=True,
-                ssl_cert_reqs=ssl.CERT_REQUIRED,
-                ssl_ca_certs=certifi.where(),
-                connect_timeout=30000,
-                socketTimeoutMS=None,
-                connectTimeoutMS=30000,
-                retryWrites=True,
-                w="majority"
-            )
-            
-            # Test connection
-            client.admin.command('ping')
-            print("MongoDB connection test successful!")
-            client.close()
-            return True
-        except Exception as e:
-            print(f"MongoDB connection test failed: {str(e)}")
-            return False
+def test_mongodb_connection():
+    """Test MongoDB connection separately"""
+    try:
+        print("Testing MongoDB connection...")
+        mongodb_uri = os.environ.get('MONGODB_URI', '')
+        if not mongodb_uri:
+            raise ValueError("MongoDB URI not found in environment variables")
+        
+        print(f"MongoDB URI format (masked): {AmazonJobsTracker.mask_connection_string(mongodb_uri)}")
+        
+        client = MongoClient(
+            mongodb_uri,
+            server_api=ServerApi('1'),
+            ssl=True,
+            ssl_cert_reqs=ssl.CERT_REQUIRED,
+            ssl_ca_certs=certifi.where(),
+            connect_timeout=30000,
+            socketTimeoutMS=None,
+            connectTimeoutMS=30000,
+            retryWrites=True,
+            w="majority"
+        )
+        
+        # Test connection
+        client.admin.command('ping')
+        print("MongoDB connection test successful!")
+        client.close()
+        return True
+    except Exception as e:
+        print(f"MongoDB connection test failed: {str(e)}")
+        return False
 
 def main():
     tracker = None
