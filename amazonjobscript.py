@@ -1,21 +1,40 @@
-from urllib.parse import urlencode
 import urllib3
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import os
-from pathlib import Path
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
 
 class AmazonJobsTracker:
     def __init__(self):
-        self.seen_jobs_file = 'seen_jobs.json'
-        self.seen_jobs = self.load_seen_jobs()
+        # MongoDB Atlas connection
+        try:
+            mongodb_uri = os.environ.get('MONGODB_URI', '')
+            if not mongodb_uri:
+                raise ValueError("MongoDB URI not found in environment variables")
+            
+            print("Connecting to MongoDB Atlas...")
+            self.client = MongoClient(mongodb_uri, server_api=ServerApi('1'))
+            
+            # Test the connection
+            self.client.admin.command('ping')
+            print("Successfully connected to MongoDB Atlas!")
+            
+            self.db = self.client['amazon_jobs']
+            self.seen_jobs_collection = self.db['seen_jobs']
+            self.initialize_ttl_index()
+            
+        except Exception as e:
+            print(f"Error connecting to MongoDB: {str(e)}")
+            raise
         
-        # Get email configuration from environment variables
+        # Email configuration
         self.smtp_server = 'smtp.gmail.com'
         self.smtp_port = 587
         self.email_address = os.environ['EMAIL_ADDRESS']
@@ -23,18 +42,36 @@ class AmazonJobsTracker:
         self.cc_email = os.environ['CC_EMAIL']
         self.bcc_recipients = os.environ['BCC_RECIPIENTS'].split(',')
         
-    def load_seen_jobs(self):
-        """Load previously seen job IDs from file"""
-        if os.path.exists(self.seen_jobs_file):
-            with open(self.seen_jobs_file, 'r') as f:
-                return set(json.load(f))
-        return set()
-    
-    def save_seen_jobs(self):
-        """Save seen job IDs to file"""
-        with open(self.seen_jobs_file, 'w') as f:
-            json.dump(list(self.seen_jobs), f)
-    
+    def initialize_ttl_index(self):
+        """Initialize TTL index to automatically remove old job entries after 30 days"""
+        try:
+            self.seen_jobs_collection.create_index(
+                "created_at", 
+                expireAfterSeconds=30 * 24 * 60 * 60  # 30 days
+            )
+        except Exception as e:
+            print(f"Error creating TTL index: {e}")
+
+    def is_job_seen(self, job_id):
+        """Check if job has been seen before"""
+        return self.seen_jobs_collection.find_one({"_id": job_id}) is not None
+
+    def mark_job_seen(self, job_id):
+        """Mark job as seen in MongoDB"""
+        try:
+            self.seen_jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "created_at": datetime.utcnow(),
+                        "last_seen": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print(f"Error marking job as seen: {e}")
+
     def is_recent_posting(self, posted_date_str, days=1):
         """Check if the job was posted within the last specified days"""
         try:
@@ -149,9 +186,9 @@ class AmazonJobsTracker:
         searches = [
             "software dev engineer",
             "software developer 2025",
-            "system development engineer",
+            "system dev engineer",
             "entry level software 2025",
-            "software development engineer",
+            "system development engineer",
             "graduate software engineer 2025",
             "university graduate software 2025",
             "sde 2025"
@@ -191,10 +228,10 @@ class AmazonJobsTracker:
                     
                     for job in jobs:
                         job_id = job['id_icims']
-                        if (job_id not in self.seen_jobs and 
+                        if (not self.is_job_seen(job_id) and 
                             self.is_recent_posting(job['posted_date'])):
                             new_jobs.append(job)
-                            self.seen_jobs.add(job_id)
+                            self.mark_job_seen(job_id)
                 
             except Exception as e:
                 print(f"Error with search term '{search_term}': {e}")
@@ -210,7 +247,6 @@ class AmazonJobsTracker:
         
         if unique_new_jobs:
             self.send_email(unique_new_jobs)
-            self.save_seen_jobs()
             print(f"\nFound {len(unique_new_jobs)} new jobs!")
         else:
             print("\nNo new jobs found.")
@@ -222,6 +258,10 @@ def main():
     except Exception as e:
         print(f"Error in main execution: {str(e)}")
         raise
+    finally:
+        # Close MongoDB connection
+        if hasattr(tracker, 'client'):
+            tracker.client.close()
 
 if __name__ == "__main__":
     main()
