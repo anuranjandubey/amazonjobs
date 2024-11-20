@@ -46,11 +46,21 @@ class AmazonJobsTracker:
         self.email_password = os.environ['EMAIL_PASSWORD']
         self.cc_email = os.environ['CC_EMAIL']
         self.bcc_recipients = os.environ['BCC_RECIPIENTS'].split(',')
-        
+
+    def is_recent_posting(self, posted_date_str, days=1):
+        """Check if the job was posted within the last specified days"""
+        try:
+            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
+            current_date = datetime.now()
+            difference = current_date - posted_date
+            return difference.days <= days
+        except Exception as e:
+            print(f"Error parsing date {posted_date_str}: {e}")
+            return False
+
     def initialize_ttl_index(self):
         """Initialize TTL index to automatically remove old job entries after 30 days"""
         try:
-            # Create TTL index if it doesn't exist
             self.seen_jobs_collection.create_index(
                 "created_at", 
                 expireAfterSeconds=30 * 24 * 60 * 60  # 30 days
@@ -65,17 +75,6 @@ class AmazonJobsTracker:
             return self.seen_jobs_collection.find_one({"_id": job_id}) is not None
         except Exception as e:
             print(f"Error checking job status: {e}")
-            return False
-
-    def is_recent_posting(self, posted_date_str, days=1):
-        """Check if the job was posted within the last specified days"""
-        try:
-            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
-            current_date = datetime.now()
-            difference = current_date - posted_date
-            return difference.days <= days
-        except Exception as e:
-            print(f"Error parsing date {posted_date_str}: {e}")
             return False
 
     def mark_job_seen(self, job_id, job_data):
@@ -241,13 +240,17 @@ class AmazonJobsTracker:
                 if response.status == 200:
                     data = json.loads(response.data.decode('utf-8'))
                     jobs = data.get("jobs", [])
+                    print(f"Found {len(jobs)} jobs for search term: {search_term}")
                     
                     for job in jobs:
                         job_id = job['id_icims']
                         if (not self.is_job_seen(job_id) and 
                             self.is_recent_posting(job['posted_date'])):
                             new_jobs.append(job)
-                            self.mark_job_seen(job_id)
+                            self.mark_job_seen(job_id, job)
+                            print(f"New job found: {job['title']} ({job_id})")
+                else:
+                    print(f"Error: Received status code {response.status}")
                 
             except Exception as e:
                 print(f"Error with search term '{search_term}': {e}")
@@ -262,8 +265,9 @@ class AmazonJobsTracker:
                 unique_new_jobs.append(job)
         
         if unique_new_jobs:
+            print(f"\nSending email for {len(unique_new_jobs)} new jobs...")
             self.send_email(unique_new_jobs)
-            print(f"\nFound {len(unique_new_jobs)} new jobs!")
+            print(f"Email sent successfully!")
         else:
             print("\nNo new jobs found.")
 
