@@ -1,43 +1,30 @@
 import urllib3
 import json
 from datetime import datetime, timedelta
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import os
-from pymongo import MongoClient, ASCENDING
-from pymongo.server_api import ServerApi
+from pymongo.mongo_client import MongoClient
 import sys
-import ssl
-import certifi
 
 class AmazonJobsTracker:
     def __init__(self):
         # MongoDB Atlas connection
         try:
-            mongodb_uri = os.environ.get('MONGODB_URI', '')
-            if not mongodb_uri:
+            uri = os.environ.get('MONGODB_URI', '')
+            if not uri:
                 raise ValueError("MongoDB URI not found in environment variables")
             
             print("Connecting to MongoDB Atlas...")
-            # Modified connection parameters
-            self.client = MongoClient(
-                mongodb_uri,
-                server_api=ServerApi('1'),
-                tlsCAFile=certifi.where(),
-                connectTimeoutMS=30000,
-                socketTimeoutMS=None,
-                connect=True,
-                retryWrites=True,
-                w="majority"
-            )
+            self.client = MongoClient(uri)
             
             # Test the connection
             self.client.admin.command('ping')
-            print("Successfully connected to MongoDB Atlas!")
+            print("Pinged your deployment. You successfully connected to MongoDB!")
             
             self.db = self.client['amazon_jobs']
             self.seen_jobs_collection = self.db['seen_jobs']
@@ -45,7 +32,6 @@ class AmazonJobsTracker:
             
         except Exception as e:
             print(f"Error connecting to MongoDB: {str(e)}")
-            print(f"MongoDB URI being used (without password): {self.mask_connection_string(mongodb_uri)}")
             raise
         
         # Email configuration
@@ -55,62 +41,47 @@ class AmazonJobsTracker:
         self.email_password = os.environ['EMAIL_PASSWORD']
         self.cc_email = os.environ['CC_EMAIL']
         self.bcc_recipients = os.environ['BCC_RECIPIENTS'].split(',')
-
-    @staticmethod
-    def mask_connection_string(uri):
-        """Mask sensitive information in connection string for logging"""
-        if not uri:
-            return "No URI provided"
-        try:
-            # Replace password with ***
-            parts = uri.split('@')
-            if len(parts) > 1:
-                credentials = parts[0].split(':')
-                if len(credentials) > 2:
-                    masked_uri = f"{credentials[0]}:***@{parts[1]}"
-                    return masked_uri
-            return uri.replace(uri.split(':')[2].split('@')[0], '***')
-        except:
-            return "Error masking URI"
         
     def initialize_ttl_index(self):
         """Initialize TTL index to automatically remove old job entries after 30 days"""
         try:
-            # List all indexes
-            existing_indexes = list(self.seen_jobs_collection.list_indexes())
-            ttl_index_exists = False
-            
-            # Check for existing TTL index
-            for index in existing_indexes:
-                if "created_at" in index["key"]:
-                    ttl_index_exists = True
-                    break
-            
-            if not ttl_index_exists:
-                print("Creating TTL index for job tracking...")
-                self.seen_jobs_collection.create_index(
-                    [("created_at", ASCENDING)],
-                    expireAfterSeconds=30 * 24 * 60 * 60,  # 30 days
-                    background=True
-                )
-                print("TTL index created successfully!")
-            else:
-                print("TTL index already exists")
-                
+            # Create TTL index if it doesn't exist
+            self.seen_jobs_collection.create_index(
+                "created_at", 
+                expireAfterSeconds=30 * 24 * 60 * 60  # 30 days
+            )
+            print("TTL index check completed")
         except Exception as e:
             print(f"Error managing TTL index: {e}")
-            print("Continuing without TTL index...")
 
-    def is_recent_posting(self, posted_date_str, days=1):
-        """Check if the job was posted within the last specified days"""
+    def is_job_seen(self, job_id):
+        """Check if job has been seen before"""
         try:
-            posted_date = datetime.strptime(posted_date_str, "%B %d, %Y")
-            current_date = datetime.now()
-            difference = current_date - posted_date
-            return difference.days <= days
+            return self.seen_jobs_collection.find_one({"_id": job_id}) is not None
         except Exception as e:
-            print(f"Error parsing date {posted_date_str}: {e}")
+            print(f"Error checking job status: {e}")
             return False
+
+    def mark_job_seen(self, job_id, job_data):
+        """Mark job as seen in MongoDB with additional data"""
+        try:
+            self.seen_jobs_collection.update_one(
+                {"_id": job_id},
+                {
+                    "$set": {
+                        "created_at": datetime.utcnow(),
+                        "last_seen": datetime.utcnow(),
+                        "title": job_data.get('title', ''),
+                        "location": job_data.get('location', ''),
+                        "posted_date": job_data.get('posted_date', ''),
+                        "level": job_data.get('level', ''),
+                        "url": f"https://www.amazon.jobs/en/jobs/{job_id}"
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print(f"Error marking job as seen: {e}")
 
     def generate_html_content(self, new_jobs):
         """Generate HTML email content for new jobs"""
@@ -284,28 +255,13 @@ def test_mongodb_connection():
     """Test MongoDB connection separately"""
     try:
         print("Testing MongoDB connection...")
-        mongodb_uri = os.environ.get('MONGODB_URI', '')
-        if not mongodb_uri:
+        uri = os.environ.get('MONGODB_URI', '')
+        if not uri:
             raise ValueError("MongoDB URI not found in environment variables")
-        
-        print(f"MongoDB URI format (masked): {AmazonJobsTracker.mask_connection_string(mongodb_uri)}")
-        
-        client = MongoClient(
-            mongodb_uri,
-            server_api=ServerApi('1'),
-            ssl=True,
-            ssl_cert_reqs=ssl.CERT_REQUIRED,
-            ssl_ca_certs=certifi.where(),
-            connect_timeout=30000,
-            socketTimeoutMS=None,
-            connectTimeoutMS=30000,
-            retryWrites=True,
-            w="majority"
-        )
-        
-        # Test connection
+
+        client = MongoClient(uri)
         client.admin.command('ping')
-        print("MongoDB connection test successful!")
+        print("Pinged your deployment. You successfully connected to MongoDB!")
         client.close()
         return True
     except Exception as e:
